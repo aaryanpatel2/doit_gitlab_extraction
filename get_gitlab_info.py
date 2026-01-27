@@ -9,7 +9,15 @@ from functools import reduce
 from pathlib import Path
 
 # Load environment variables
-env_path = Path(__file__).parent / ".env"
+# Handle both development and PyInstaller bundled app
+if getattr(sys, 'frozen', False):
+    # Running as compiled executable
+    bundle_dir = Path(sys.executable).parent
+else:
+    # Running in normal Python environment
+    bundle_dir = Path(__file__).parent
+
+env_path = bundle_dir / ".env"
 load_dotenv(dotenv_path=env_path)
 
 # Configuration
@@ -17,57 +25,93 @@ GITLAB_API_URL = "https://git.doit.wisc.edu/api/v4/projects"
 PRIVATE_TOKEN = os.getenv("GITLAB_DOIT_PERSONAL_ACCESS_TOKEN")
 
 if not PRIVATE_TOKEN:
-    raise ValueError("GITLAB_DOIT_PERSONAL_ACCESS_TOKEN is not set in the environment variables.")
+    raise ValueError(f"GITLAB_DOIT_PERSONAL_ACCESS_TOKEN is not set. Looking for .env at: {env_path}")
 
 HEADERS = {
     "PRIVATE-TOKEN": PRIVATE_TOKEN
 }
 
-# Fetch events with error handling
-def fetch_events(url, params):
-    response = requests.get(url, headers=HEADERS, params=params)
-    if response.status_code != 200:
-        raise Exception(f"Failed to fetch data: {response.status_code}, {response.text}")
-    return response.json()
+# Fetch events with error handling and pagination
+def fetch_events(url, params, paginate=False):
+    if not paginate:
+        response = requests.get(url, headers=HEADERS, params=params)
+        if response.status_code != 200:
+            raise Exception(f"Failed to fetch data: {response.status_code}, {response.text}")
+        return response.json()
+    
+    # Handle pagination for large datasets
+    all_results = []
+    page = 1
+    params = params.copy()
+    params['per_page'] = 100
+    
+    print(f"DEBUG: Fetching with pagination from URL with params: {params}")
+    
+    while True:
+        params['page'] = page
+        response = requests.get(url, headers=HEADERS, params=params)
+        print(f"DEBUG: Page {page} - Status: {response.status_code}")
+        if response.status_code != 200:
+            raise Exception(f"Failed to fetch data: {response.status_code}, {response.text}")
+        
+        results = response.json()
+        print(f"DEBUG: Page {page} - Got {len(results)} items")
+        if not results:
+            break
+        
+        all_results.extend(results)
+        
+        # Check if there are more pages
+        if 'x-next-page' not in response.headers or not response.headers['x-next-page']:
+            break
+        
+        page += 1
+    
+    print(f"DEBUG: Total items fetched: {len(all_results)}")
+    return all_results
 
 # Push Events
 def get_push_events(project_id, since, until):
     url = f"{GITLAB_API_URL}/{project_id}/events"
     params = {"action": "pushed", "after": since.isoformat(), "before": until.isoformat()}
-    return fetch_events(url, params)
+    return fetch_events(url, params, paginate=True)
 
 # Commits
 def get_commits(project_id, since, until):
     url = f"{GITLAB_API_URL}/{project_id}/repository/commits"
     params = {"since": since.isoformat(), "until": until.isoformat()}
-    return fetch_events(url, params)
+    print(f"DEBUG: Fetching commits from {url}")
+    print(f"DEBUG: Params: {params}")
+    result = fetch_events(url, params, paginate=True)
+    print(f"DEBUG: Got {len(result) if isinstance(result, list) else 0} commits")
+    return result
 
 # Merge Events
 def get_merge_events(project_id):
     url = f"{GITLAB_API_URL}/{project_id}/merge_requests"
     params = {"state": "all"}
-    return fetch_events(url, params)
+    return fetch_events(url, params, paginate=True)
 
 def get_merge_events_opened(project_id):
     url = f"{GITLAB_API_URL}/{project_id}/merge_requests"
     params = {"state": "opened"}
-    return fetch_events(url, params)
+    return fetch_events(url, params, paginate=True)
 
 def get_merge_events_closed(project_id):
     url = f"{GITLAB_API_URL}/{project_id}/merge_requests"
     params = {"state": "closed"}
-    return fetch_events(url, params)
+    return fetch_events(url, params, paginate=True)
 
 def get_merge_events_merged(project_id):
     url = f"{GITLAB_API_URL}/{project_id}/merge_requests"
     params = {"state": "merged"}
-    return fetch_events(url, params)
+    return fetch_events(url, params, paginate=True)
 
 # Issue Events
 def get_issue_events(project_id, since, until):
     url = f"{GITLAB_API_URL}/{project_id}/issues"
-    params = {"updated_after": since.isoformat(), "updated_before": until.isoformat(), "per_page": 100, "page": 1, "scope": "all"}
-    return fetch_events(url, params)
+    params = {"updated_after": since.isoformat(), "updated_before": until.isoformat(), "scope": "all"}
+    return fetch_events(url, params, paginate=True)
 
 def get_closed_issues(project_id, since, until):
     url = f"{GITLAB_API_URL}/{project_id}/issues"
@@ -75,23 +119,21 @@ def get_closed_issues(project_id, since, until):
         "state": "closed",
         "updated_after": since.isoformat(),
         "updated_before": until.isoformat(),
-        "per_page": 100,
-        "page": 1,
         "scope": "all"
     }
-    return fetch_events(url, params)
+    return fetch_events(url, params, paginate=True)
 
 # Milestones
 def get_milestones(project_id, since, until):
     url = f"{GITLAB_API_URL}/{project_id}/milestones"
-    params = {"per_page": 100, "created_after": since.isoformat(), "created_before": until.isoformat()}
-    return fetch_events(url, params)
+    params = {"created_after": since.isoformat(), "created_before": until.isoformat()}
+    return fetch_events(url, params, paginate=True)
 
 # Service Desk
 def get_service_desk_issues(project_id, since, until):
     url = f"{GITLAB_API_URL}/{project_id}/issues"
-    params = {"created_after": since.isoformat(), "created_before": until.isoformat(), "service_desk_reply": "true", "per_page": 100, "page": 1, "scope": "all"}
-    return fetch_events(url, params)
+    params = {"created_after": since.isoformat(), "created_before": until.isoformat(), "service_desk_reply": "true", "scope": "all"}
+    return fetch_events(url, params, paginate=True)
 
 def parse_year_month(year_month_str):
     """Parse year-month string like '2025-05' and return start and end dates for that month"""
@@ -115,11 +157,9 @@ def get_bug_issues(project_id, since, until):
         "labels": "bug",
         "created_after": since.isoformat(),
         "created_before": until.isoformat(),
-        "per_page": 100,
-        "page": 1,
         "scope": "all"
     }
-    return fetch_events(url, params)
+    return fetch_events(url, params, paginate=True)
 
 
 if __name__ == "__main__":

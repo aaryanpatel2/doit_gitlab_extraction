@@ -15,7 +15,7 @@ class GitlabInfoApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title('GitLab Info Extractor')
-        self.geometry('400x350')
+        self.geometry('450x450')
         self.resizable(False, False)
         style = ttk.Style(self)
         style.theme_use(style.theme_names()[0])
@@ -32,28 +32,56 @@ class GitlabInfoApp(tk.Tk):
         self.project_id_entry = ttk.Entry(self, textvariable=self.project_id_var)
         self.project_id_entry.pack(pady=5, padx=30, fill='x')
 
+        # Date selection mode (Month or Date Range)
+        ttk.Label(self, text='Date Selection Mode:').pack(pady=(10, 0), anchor='w', padx=30)
+        self.date_mode_var = tk.StringVar(value='month')
+        mode_frame = ttk.Frame(self)
+        mode_frame.pack(pady=5, padx=30, fill='x')
+        ttk.Radiobutton(mode_frame, text='Month', variable=self.date_mode_var, value='month', command=self.toggle_date_mode).pack(side='left', padx=(0, 15))
+        ttk.Radiobutton(mode_frame, text='Date Range', variable=self.date_mode_var, value='range', command=self.toggle_date_mode).pack(side='left')
+
         # Month selection (Year and Month Comboboxes)
-        ttk.Label(self, text='Select Year and Month:').pack(pady=(10, 0), anchor='w', padx=30)
-        year_frame = ttk.Frame(self)
-        year_frame.pack(pady=5, padx=30, fill='x')
+        self.month_label = ttk.Label(self, text='Select Year and Month:')
+        self.month_label.pack(pady=(10, 0), anchor='w', padx=30)
+        self.month_frame = ttk.Frame(self)
+        self.month_frame.pack(pady=5, padx=30, fill='x')
         
         # Year Combobox
         current_year = datetime.datetime.now().year
         years = [str(y) for y in range(current_year - 5, current_year + 2)]
         self.year_var = tk.StringVar(value=str(current_year))
-        ttk.Label(year_frame, text='Year:').pack(side='left', padx=(0, 5))
-        self.year_combo = ttk.Combobox(year_frame, textvariable=self.year_var, values=years, width=6, state='normal')
+        ttk.Label(self.month_frame, text='Year:').pack(side='left', padx=(0, 5))
+        self.year_combo = ttk.Combobox(self.month_frame, textvariable=self.year_var, values=years, width=6, state='normal')
         self.year_combo.pack(side='left', padx=(0, 15))
         
         # Month Combobox
         months = [f'{m:02d}' for m in range(1, 13)]
         self.month_var = tk.StringVar(value=f'{datetime.datetime.now().month:02d}')
-        ttk.Label(year_frame, text='Month:').pack(side='left', padx=(0, 5))
-        self.month_combo = ttk.Combobox(year_frame, textvariable=self.month_var, values=months, width=4, state='normal')
+        ttk.Label(self.month_frame, text='Month:').pack(side='left', padx=(0, 5))
+        self.month_combo = ttk.Combobox(self.month_frame, textvariable=self.month_var, values=months, width=4, state='normal')
         self.month_combo.pack(side='left')
 
+        # Date Range selection
+        self.range_label = ttk.Label(self, text='Select Date Range:')
+        self.range_frame = ttk.Frame(self)
+        
+        # Start Date
+        start_frame = ttk.Frame(self.range_frame)
+        start_frame.pack(pady=2, fill='x')
+        ttk.Label(start_frame, text='From:').pack(side='left', padx=(0, 5))
+        self.start_date = DateEntry(start_frame, width=18, borderwidth=2, date_pattern='yyyy-mm-dd')
+        self.start_date.pack(side='left', padx=(0, 10))
+        
+        # End Date
+        end_frame = ttk.Frame(self.range_frame)
+        end_frame.pack(pady=2, fill='x')
+        ttk.Label(end_frame, text='To:').pack(side='left', padx=(0, 5))
+        self.end_date = DateEntry(end_frame, width=18, borderwidth=2, date_pattern='yyyy-mm-dd')
+        self.end_date.pack(side='left', padx=(0, 10))
+
         # Output directory
-        ttk.Label(self, text='Output Directory:').pack(pady=(10, 0), anchor='w', padx=30)
+        self.output_dir_label = ttk.Label(self, text='Output Directory:')
+        self.output_dir_label.pack(pady=(10, 0), anchor='w', padx=30)
         self.output_dir_var = tk.StringVar()
         self.output_dir_entry = ttk.Entry(self, textvariable=self.output_dir_var, width=30)
         self.output_dir_entry.pack(pady=5, padx=30, fill='x')
@@ -61,12 +89,31 @@ class GitlabInfoApp(tk.Tk):
 
         # Run button
         self.run_button = ttk.Button(self, text='Extract Data', command=self.run_extraction, style='Accent.TButton')
-        self.run_button.pack(pady=20, padx=30, fill='x')
+        self.run_button.pack(pady=(20, 5), padx=30, fill='x')
 
         # Status label
         self.status_var = tk.StringVar()
         self.status_label = ttk.Label(self, textvariable=self.status_var, foreground='blue')
-        self.status_label.pack(pady=(5, 15), padx=30, anchor='w')
+        self.status_label.pack(pady=(0, 15), padx=30, anchor='w')
+        
+        # Initialize with month mode visible
+        self.toggle_date_mode()
+
+    def toggle_date_mode(self):
+        """Toggle between month and date range selection modes"""
+        mode = self.date_mode_var.get()
+        if mode == 'month':
+            # Show month selection, hide date range
+            self.month_label.pack(pady=(10, 0), anchor='w', padx=30, before=self.output_dir_label)
+            self.month_frame.pack(pady=5, padx=30, fill='x', before=self.output_dir_label)
+            self.range_label.pack_forget()
+            self.range_frame.pack_forget()
+        else:
+            # Show date range, hide month selection
+            self.month_label.pack_forget()
+            self.month_frame.pack_forget()
+            self.range_label.pack(pady=(10, 0), anchor='w', padx=30, before=self.output_dir_label)
+            self.range_frame.pack(pady=5, padx=30, fill='x', before=self.output_dir_label)
 
     def browse_output_dir(self):
         directory = filedialog.askdirectory()
@@ -75,12 +122,10 @@ class GitlabInfoApp(tk.Tk):
 
     def run_extraction(self):
         project_id = self.project_id_var.get().strip()
-        year = self.year_var.get().strip()
-        month = self.month_var.get().strip()
         output_dir = self.output_dir_var.get().strip()
-        year_month = f"{year}-{month}"
+        mode = self.date_mode_var.get()
 
-        if not project_id or not year or not month or not output_dir:
+        if not project_id or not output_dir:
             messagebox.showerror('Error', 'Please fill in all fields.')
             return
 
@@ -92,26 +137,51 @@ class GitlabInfoApp(tk.Tk):
         # Run extraction in a separate thread to keep UI responsive
         def extraction_thread():
             try:
-                # Parse the year-month
-                year_int, month_int = int(year), int(month)
-                since = datetime.datetime(year_int, month_int, 1)
-                last_day = calendar.monthrange(year_int, month_int)[1]
-                until = datetime.datetime(year_int, month_int, last_day, 23, 59, 59)
+                # Determine date range based on mode
+                if mode == 'month':
+                    year = self.year_var.get().strip()
+                    month = self.month_var.get().strip()
+                    if not year or not month:
+                        self.after(0, lambda: messagebox.showerror('Error', 'Please select year and month.'))
+                        self.after(0, lambda: self.run_button.config(state='normal'))
+                        return
+                    year_int, month_int = int(year), int(month)
+                    since = datetime.datetime(year_int, month_int, 1)
+                    last_day = calendar.monthrange(year_int, month_int)[1]
+                    until = datetime.datetime(year_int, month_int, last_day, 23, 59, 59)
+                else:  # date range mode
+                    since = datetime.datetime.combine(self.start_date.get_date(), datetime.time.min)
+                    until = datetime.datetime.combine(self.end_date.get_date(), datetime.time(23, 59, 59))
+                    if since > until:
+                        self.after(0, lambda: messagebox.showerror('Error', 'Start date must be before or equal to end date.'))
+                        self.after(0, lambda: self.run_button.config(state='normal'))
+                        return
                 
-                # Fetch all data using imported functions
+                # Fetch all data using imported functions with progress updates
+                self.after(0, lambda: self.status_var.set('Fetching push events...'))
                 push_events = get_gitlab_info.get_push_events(project_id, since, until)
+                
+                self.after(0, lambda: self.status_var.set('Fetching commits...'))
                 commits = get_gitlab_info.get_commits(project_id, since, until)
+                print(f"DEBUG: Fetched {len(commits) if isinstance(commits, list) else 0} commits")
+                
+                self.after(0, lambda: self.status_var.set('Fetching merge requests...'))
                 merge_events = get_gitlab_info.get_merge_events(project_id)
                 merge_events_opened = get_gitlab_info.get_merge_events_opened(project_id)
                 merge_events_closed = get_gitlab_info.get_merge_events_closed(project_id)
                 merge_events_merged = get_gitlab_info.get_merge_events_merged(project_id)
+                
+                self.after(0, lambda: self.status_var.set('Fetching issues...'))
                 issue_events = get_gitlab_info.get_issue_events(project_id, since, until)
-                milestones = get_gitlab_info.get_milestones(project_id, since, until)
-                service_desk_issues = get_gitlab_info.get_service_desk_issues(project_id, since, until)
                 closed_issues = get_gitlab_info.get_closed_issues(project_id, since, until)
                 bug_issues = get_gitlab_info.get_bug_issues(project_id, since, until)
                 
-                # Filter milestones
+                self.after(0, lambda: self.status_var.set('Fetching milestones and service desk...'))
+                milestones = get_gitlab_info.get_milestones(project_id, since, until)
+                service_desk_issues = get_gitlab_info.get_service_desk_issues(project_id, since, until)
+                
+                # Filter and process data
+                self.after(0, lambda: self.status_var.set('Filtering milestones...'))
                 import pandas as pd
                 milestones_in_month = []
                 for milestone in milestones:
@@ -124,8 +194,12 @@ class GitlabInfoApp(tk.Tk):
                             milestones_in_month.append(milestone)
                 
                 # Convert to DataFrames
+                self.after(0, lambda: self.status_var.set('Converting to data tables...'))
                 push_df = pd.DataFrame(push_events) if isinstance(push_events, list) else pd.DataFrame()
                 commits_df = pd.DataFrame(commits) if isinstance(commits, list) else pd.DataFrame()
+                print(f"DEBUG: Commits DataFrame has {len(commits_df)} rows and {len(commits_df.columns)} columns")
+                if not commits_df.empty:
+                    print(f"DEBUG: Commits columns: {list(commits_df.columns)}")
                 merge_df = pd.DataFrame(merge_events) if isinstance(merge_events, list) else pd.DataFrame()
                 merge_df_opened = pd.DataFrame(merge_events_opened) if isinstance(merge_events_opened, list) else pd.DataFrame()
                 merge_df_closed = pd.DataFrame(merge_events_closed) if isinstance(merge_events_closed, list) else pd.DataFrame()
@@ -161,6 +235,7 @@ class GitlabInfoApp(tk.Tk):
                     return df_copy
                 
                 # Filter merge DataFrames
+                self.after(0, lambda: self.status_var.set('Filtering merge requests by date...'))
                 filtered_merge_df = filter_by_date(merge_df.copy(), since, until)
                 filtered_merge_df_opened = filter_by_date(merge_df_opened.copy(), since, until)
                 filtered_merge_df_closed = filter_by_date(merge_df_closed.copy(), since, until)
@@ -168,6 +243,7 @@ class GitlabInfoApp(tk.Tk):
                 filtered_issue_df = filter_by_date(issue_df.copy(), since, until, 'updated_at') if 'updated_at' in issue_df.columns else issue_df
                 
                 # Remove timezone info
+                self.after(0, lambda: self.status_var.set('Cleaning data...'))
                 push_df_clean = remove_timezone_info(push_df)
                 commits_df_clean = remove_timezone_info(commits_df)
                 filtered_merge_df_clean = remove_timezone_info(filtered_merge_df)
@@ -181,6 +257,7 @@ class GitlabInfoApp(tk.Tk):
                 bug_issues_df_clean = remove_timezone_info(bug_issues_df)
                 
                 # Merge DataFrames
+                self.after(0, lambda: self.status_var.set('Merging all data...'))
                 def merge_on_project_id(left, right):
                     right_unique = right[[col for col in right.columns if col not in left.columns or col == 'project_id']]
                     return pd.merge(left, right_unique, on='project_id', how='outer')
@@ -199,16 +276,22 @@ class GitlabInfoApp(tk.Tk):
                 else:
                     merged_df = pd.DataFrame()
                 
-                # Create output directory
-                year_month_prefix = since.strftime('%Y-%m')
-                final_output_dir = os.path.join(output_dir, year_month_prefix)
+                # Create output directory and file prefix based on mode
+                if mode == 'month':
+                    date_prefix = since.strftime('%Y-%m')
+                else:
+                    date_prefix = f"{since.strftime('%Y-%m-%d')}_to_{until.strftime('%Y-%m-%d')}"
+                
+                final_output_dir = os.path.join(output_dir, date_prefix)
                 os.makedirs(final_output_dir, exist_ok=True)
                 
                 # Save to Excel
-                merged_output_file = os.path.join(final_output_dir, f"{year_month_prefix}_all_gitlab_info.xlsx")
+                self.after(0, lambda: self.status_var.set('Saving to Excel files...'))
+                merged_output_file = os.path.join(final_output_dir, f"{date_prefix}_all_gitlab_info.xlsx")
                 merged_df.to_excel(merged_output_file, index=False)
                 
-                commits_output_file = os.path.join(final_output_dir, f"{year_month_prefix}_commits.xlsx")
+                commits_output_file = os.path.join(final_output_dir, f"{date_prefix}_commits.xlsx")
+                print(f"DEBUG: Saving commits file with {len(commits_df_clean)} rows")
                 commits_df_clean.to_excel(commits_output_file, index=False)
                 
                 # Update UI on main thread
