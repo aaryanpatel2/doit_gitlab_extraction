@@ -17,6 +17,13 @@ else:
     # Running in normal Python environment
     bundle_dir = Path(__file__).parent
 
+
+## UNCOMMENT TO WORK ON WINDOWS
+if getattr(sys, 'frozen', False):
+    bundle_dir = Path(getattr(sys, '_MEIPASS', Path(sys.executable).parent))
+else:
+    bundle_dir = Path(__file__).parent
+
 env_path = bundle_dir / ".env"
 load_dotenv(dotenv_path=env_path)
 
