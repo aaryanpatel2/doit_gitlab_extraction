@@ -203,17 +203,14 @@ if __name__ == "__main__":
         print(f"Using output directory: {output_base_dir}")
 
     try:
-        # Fetch all data
+        # Fetch all data (fetch each entity type only once)
         push_events = get_push_events(project_id, since, until)
         commits = get_commits(project_id, since, until)
+        # Only fetch all merge requests (contains opened, closed, merged)
         merge_events = get_merge_events(project_id)
-        merge_events_opened = get_merge_events_opened(project_id)
-        merge_events_closed = get_merge_events_closed(project_id)
-        merge_events_merged = get_merge_events_merged(project_id)
+        # Only fetch all issues (contains closed, service desk, bugs)
         issue_events = get_issue_events(project_id, since, until)
         milestones = get_milestones(project_id, since, until)
-        service_desk_issues = get_service_desk_issues(project_id, since, until)
-        closed_issues = get_closed_issues(project_id, since, until)
 
         milestones_in_month = []
         for milestone in milestones:
@@ -233,13 +230,8 @@ if __name__ == "__main__":
         push_df = pd.DataFrame(push_events) if isinstance(push_events, list) else pd.DataFrame()
         commits_df = pd.DataFrame(commits) if isinstance(commits, list) else pd.DataFrame()
         merge_df = pd.DataFrame(merge_events) if isinstance(merge_events, list) else pd.DataFrame()
-        merge_df_opened = pd.DataFrame(merge_events_opened) if isinstance(merge_events_opened, list) else pd.DataFrame()
-        merge_df_closed = pd.DataFrame(merge_events_closed) if isinstance(merge_events_closed, list) else pd.DataFrame()
-        merge_df_merged = pd.DataFrame(merge_events_merged) if isinstance(merge_events_merged, list) else pd.DataFrame()
         issue_df = pd.DataFrame(issue_events) if isinstance(issue_events, list) else pd.DataFrame()
         milestones_df = pd.DataFrame(milestones_in_month) if isinstance(milestones_in_month, list) else pd.DataFrame()
-        service_desk_df = pd.DataFrame(service_desk_issues) if isinstance(service_desk_issues, list) else pd.DataFrame()
-        closed_issues_df = pd.DataFrame(closed_issues) if isinstance(closed_issues, list) else pd.DataFrame()
         
         # Function to filter dataframe by created_at
         def filter_by_date(df, since, until, date_column='created_at'):
@@ -278,34 +270,22 @@ if __name__ == "__main__":
 
         # Filter merge DataFrames (these don't have date filters in API, so filter manually)
         filtered_merge_df = filter_by_date(merge_df.copy(), since, until)
-        filtered_merge_df_opened = filter_by_date(merge_df_opened.copy(), since, until)
-        filtered_merge_df_closed = filter_by_date(merge_df_closed.copy(), since, until)
-        filtered_merge_df_merged = filter_by_date(merge_df_merged.copy(), since, until)
         
         # Filter issue events by updated_at if available
         filtered_issue_df = filter_by_date(issue_df.copy(), since, until, 'updated_at') if 'updated_at' in issue_df.columns else issue_df
 
         print(f"Push events: {len(push_df)}")
         print(f"Commits: {len(commits_df)}")
-        print(f"Filtered merge events: {len(filtered_merge_df)}")
-        print(f"Filtered opened merge events: {len(filtered_merge_df_opened)}")
-        print(f"Filtered closed merge events: {len(filtered_merge_df_closed)}")
-        print(f"Filtered merged merge events: {len(filtered_merge_df_merged)}")
-        print(f"Issue events: {len(filtered_issue_df)}")
-        print(f"Service Desk issues: {len(service_desk_df)}")
+        print(f"Merge requests (all states): {len(filtered_merge_df)}")
+        print(f"Issues (all types): {len(filtered_issue_df)}")
         print(f"Milestones: {len(milestones_df)}")
 
         # Remove timezone info from all DataFrames before saving to Excel
         push_df_clean = remove_timezone_info(push_df)
         commits_df_clean = remove_timezone_info(commits_df)
         filtered_merge_df_clean = remove_timezone_info(filtered_merge_df)
-        filtered_merge_df_opened_clean = remove_timezone_info(filtered_merge_df_opened)
-        filtered_merge_df_closed_clean = remove_timezone_info(filtered_merge_df_closed)
-        filtered_merge_df_merged_clean = remove_timezone_info(filtered_merge_df_merged)
         filtered_issue_df_clean = remove_timezone_info(filtered_issue_df)
-        service_desk_df_clean = remove_timezone_info(service_desk_df)
         milestones_df_clean = remove_timezone_info(milestones_df)
-        closed_issues_df_clean = remove_timezone_info(closed_issues_df)
 
         # Create filename prefix with year-month
         year_month_prefix = since.strftime('%Y-%m')
@@ -314,35 +294,83 @@ if __name__ == "__main__":
         output_dir = os.path.join(output_base_dir, year_month_prefix)
         os.makedirs(output_dir, exist_ok=True)
 
-        bug_issues = get_bug_issues(project_id, since, until)
-        bug_issues_df = pd.DataFrame(bug_issues) if isinstance(bug_issues, list) else pd.DataFrame()
-        bug_issues_df_clean = remove_timezone_info(bug_issues_df)
-
-        def merge_on_project_id(left, right):
-            # Only keep columns in right that are not in left, except for 'project_id'
-            right_unique = right[[col for col in right.columns if col not in left.columns or col == 'project_id']]
-            return pd.merge(left, right_unique, on='project_id', how='outer')
-
-        # Filter out empty DataFrames and those without 'project_id'
-        dfs_to_merge = [
-            df for df in [
-                push_df_clean,
-                filtered_merge_df_clean,
-                filtered_merge_df_opened_clean,
-                filtered_merge_df_closed_clean,
-                filtered_merge_df_merged_clean,
-                filtered_issue_df_clean,
-                milestones_df_clean,
-                service_desk_df_clean,
-                closed_issues_df_clean,
-                bug_issues_df_clean
-            ] if not df.empty and 'project_id' in df.columns
-        ]
-
-        if dfs_to_merge:
-            merged_df = reduce(merge_on_project_id, dfs_to_merge)
+        # Add event type identifiers and rename ID columns to avoid conflicts
+        all_events = []
+        
+        if not push_df_clean.empty:
+            push_df_clean = push_df_clean.copy()
+            push_df_clean['event_type'] = 'push_event'
+            if 'id' in push_df_clean.columns:
+                push_df_clean.rename(columns={'id': 'event_id'}, inplace=True)
+            all_events.append(push_df_clean)
+        
+        if not filtered_merge_df_clean.empty:
+            filtered_merge_df_clean = filtered_merge_df_clean.copy()
+            filtered_merge_df_clean['event_type'] = 'merge_request'
+            if 'id' in filtered_merge_df_clean.columns:
+                filtered_merge_df_clean.rename(columns={'id': 'merge_request_id'}, inplace=True)
+            # The 'state' column already indicates: opened, closed, merged
+            all_events.append(filtered_merge_df_clean)
+        
+        if not filtered_issue_df_clean.empty:
+            filtered_issue_df_clean = filtered_issue_df_clean.copy()
+            filtered_issue_df_clean['event_type'] = 'issue'
+            if 'id' in filtered_issue_df_clean.columns:
+                filtered_issue_df_clean.rename(columns={'id': 'issue_id'}, inplace=True)
+            # The 'state' and 'labels' columns already indicate: closed, bug, service_desk, etc.
+            all_events.append(filtered_issue_df_clean)
+        
+        if not milestones_df_clean.empty:
+            milestones_df_clean = milestones_df_clean.copy()
+            milestones_df_clean['event_type'] = 'milestone'
+            if 'id' in milestones_df_clean.columns:
+                milestones_df_clean.rename(columns={'id': 'milestone_id'}, inplace=True)
+            all_events.append(milestones_df_clean)
+        
+        # Concatenate all events vertically (no duplicates)
+        if all_events:
+            merged_df = pd.concat(all_events, ignore_index=True, sort=False)
+            
+            # Reorder columns to group related information together
+            priority_columns = [
+                'event_type',
+                'project_id',
+                'event_id',
+                'merge_request_id',
+                'issue_id',
+                'milestone_id',
+                'iid',
+                'title',
+                'description',
+                'state',
+                'author',
+                'created_at',
+                'updated_at',
+                'closed_at',
+                'merged_at',
+                'due_date',
+                'start_date',
+                'labels',
+                'assignees',
+                'assignee',
+                'web_url',
+            ]
+            
+            # Get columns that exist in the dataframe
+            existing_priority = [col for col in priority_columns if col in merged_df.columns]
+            # Get remaining columns not in priority list
+            remaining_cols = [col for col in merged_df.columns if col not in priority_columns]
+            # Reorder: priority columns first, then everything else
+            merged_df = merged_df[existing_priority + remaining_cols]
         else:
             merged_df = pd.DataFrame()
+
+        print(f"\nTotal rows in combined file: {len(merged_df)}")
+        
+        # Print breakdown by event type
+        if not merged_df.empty and 'event_type' in merged_df.columns:
+            print("\nBreakdown by event type:")
+            print(merged_df['event_type'].value_counts().to_string())
 
         # Write merged data (all except commits) to one file
         merged_output_file = os.path.join(output_dir, f"{year_month_prefix}_all_gitlab_info.xlsx")
