@@ -71,6 +71,7 @@ class GitlabInfoApp(tk.Tk):
         ttk.Label(start_frame, text='From:').pack(side='left', padx=(0, 5))
         self.start_date = DateEntry(start_frame, width=18, borderwidth=2, date_pattern='yyyy-mm-dd')
         self.start_date.pack(side='left', padx=(0, 10))
+        self.start_date.bind('<<DateEntrySelected>>', self.on_start_date_changed)
         
         # End Date
         end_frame = ttk.Frame(self.range_frame)
@@ -78,11 +79,12 @@ class GitlabInfoApp(tk.Tk):
         ttk.Label(end_frame, text='To:').pack(side='left', padx=(0, 5))
         self.end_date = DateEntry(end_frame, width=18, borderwidth=2, date_pattern='yyyy-mm-dd')
         self.end_date.pack(side='left', padx=(0, 10))
+        self.end_date.bind('<<DateEntrySelected>>', self.on_end_date_changed)
 
         # Output directory
         self.output_dir_label = ttk.Label(self, text='Output Directory:')
         self.output_dir_label.pack(pady=(10, 0), anchor='w', padx=30)
-        self.output_dir_var = tk.StringVar()
+        self.output_dir_var = tk.StringVar(value=os.getcwd())  # Pre-fill with current working directory
         self.output_dir_entry = ttk.Entry(self, textvariable=self.output_dir_var, width=30)
         self.output_dir_entry.pack(pady=5, padx=30, fill='x')
         ttk.Button(self, text='Browse...', command=self.browse_output_dir, style='Accent.TButton').pack(pady=2, padx=30, anchor='w')
@@ -115,6 +117,16 @@ class GitlabInfoApp(tk.Tk):
             self.range_label.pack(pady=(10, 0), anchor='w', padx=30, before=self.output_dir_label)
             self.range_frame.pack(pady=5, padx=30, fill='x', before=self.output_dir_label)
 
+    def on_start_date_changed(self, event):
+        """Ensure start date is not after end date"""
+        if self.start_date.get_date() > self.end_date.get_date():
+            self.end_date.set_date(self.start_date.get_date())
+    
+    def on_end_date_changed(self, event):
+        """Ensure end date is not before start date"""
+        if self.end_date.get_date() < self.start_date.get_date():
+            self.start_date.set_date(self.end_date.get_date())
+
     def browse_output_dir(self):
         directory = filedialog.askdirectory()
         if directory:
@@ -133,175 +145,49 @@ class GitlabInfoApp(tk.Tk):
         self.run_button.config(state='disabled')
         self.status_var.set('Running extraction...')
         self.update_idletasks()
-        
+
         # Run extraction in a separate thread to keep UI responsive
         def extraction_thread():
             try:
                 # Determine date range based on mode
                 if mode == 'month':
-                    year = self.year_var.get().strip()
-                    month = self.month_var.get().strip()
-                    if not year or not month:
-                        self.after(0, lambda: messagebox.showerror('Error', 'Please select year and month.'))
-                        self.after(0, lambda: self.run_button.config(state='normal'))
-                        return
-                    year_int, month_int = int(year), int(month)
-                    since = datetime.datetime(year_int, month_int, 1)
-                    last_day = calendar.monthrange(year_int, month_int)[1]
-                    until = datetime.datetime(year_int, month_int, last_day, 23, 59, 59)
-                else:  # date range mode
-                    since = datetime.datetime.combine(self.start_date.get_date(), datetime.time.min)
-                    until = datetime.datetime.combine(self.end_date.get_date(), datetime.time(23, 59, 59))
-                    if since > until:
-                        self.after(0, lambda: messagebox.showerror('Error', 'Start date must be before or equal to end date.'))
-                        self.after(0, lambda: self.run_button.config(state='normal'))
-                        return
-                
+                    year = int(self.year_var.get())
+                    month = int(self.month_var.get())
+                    since = datetime.datetime(year, month, 1)
+                    last_day = calendar.monthrange(year, month)[1]
+                    until = datetime.datetime(year, month, last_day, 23, 59, 59)
+                else:
+                    since = self.start_date.get_date()
+                    until = self.end_date.get_date()
+                    since = datetime.datetime.combine(since, datetime.time.min)
+                    until = datetime.datetime.combine(until, datetime.time.max)
+
                 # Fetch all data using imported functions with progress updates
                 self.after(0, lambda: self.status_var.set('Fetching push events...'))
                 push_events = get_gitlab_info.get_push_events(project_id, since, until)
-                
+
                 self.after(0, lambda: self.status_var.set('Fetching commits...'))
                 commits = get_gitlab_info.get_commits(project_id, since, until)
-                print(f"DEBUG: Fetched {len(commits) if isinstance(commits, list) else 0} commits")
-                
+
                 self.after(0, lambda: self.status_var.set('Fetching merge requests...'))
                 merge_events = get_gitlab_info.get_merge_events(project_id)
-                merge_events_opened = get_gitlab_info.get_merge_events_opened(project_id)
-                merge_events_closed = get_gitlab_info.get_merge_events_closed(project_id)
-                merge_events_merged = get_gitlab_info.get_merge_events_merged(project_id)
-                
+
                 self.after(0, lambda: self.status_var.set('Fetching issues...'))
                 issue_events = get_gitlab_info.get_issue_events(project_id, since, until)
-                closed_issues = get_gitlab_info.get_closed_issues(project_id, since, until)
-                bug_issues = get_gitlab_info.get_bug_issues(project_id, since, until)
-                
-                self.after(0, lambda: self.status_var.set('Fetching milestones and service desk...'))
+
+                self.after(0, lambda: self.status_var.set('Fetching milestones...'))
                 milestones = get_gitlab_info.get_milestones(project_id, since, until)
-                service_desk_issues = get_gitlab_info.get_service_desk_issues(project_id, since, until)
-                
-                # Filter and process data
-                self.after(0, lambda: self.status_var.set('Filtering milestones...'))
-                import pandas as pd
-                milestones_in_month = []
-                for milestone in milestones:
-                    created_at_str = milestone.get("created_at")
-                    if created_at_str:
-                        created_at = pd.to_datetime(created_at_str, utc=True).tz_localize(None)
-                        since_naive = since.replace(tzinfo=None)
-                        until_naive = until.replace(tzinfo=None)
-                        if since_naive <= created_at <= until_naive:
-                            milestones_in_month.append(milestone)
-                
-                # Convert to DataFrames
-                self.after(0, lambda: self.status_var.set('Converting to data tables...'))
-                push_df = pd.DataFrame(push_events) if isinstance(push_events, list) else pd.DataFrame()
-                commits_df = pd.DataFrame(commits) if isinstance(commits, list) else pd.DataFrame()
-                print(f"DEBUG: Commits DataFrame has {len(commits_df)} rows and {len(commits_df.columns)} columns")
-                if not commits_df.empty:
-                    print(f"DEBUG: Commits columns: {list(commits_df.columns)}")
-                merge_df = pd.DataFrame(merge_events) if isinstance(merge_events, list) else pd.DataFrame()
-                merge_df_opened = pd.DataFrame(merge_events_opened) if isinstance(merge_events_opened, list) else pd.DataFrame()
-                merge_df_closed = pd.DataFrame(merge_events_closed) if isinstance(merge_events_closed, list) else pd.DataFrame()
-                merge_df_merged = pd.DataFrame(merge_events_merged) if isinstance(merge_events_merged, list) else pd.DataFrame()
-                issue_df = pd.DataFrame(issue_events) if isinstance(issue_events, list) else pd.DataFrame()
-                milestones_df = pd.DataFrame(milestones_in_month) if isinstance(milestones_in_month, list) else pd.DataFrame()
-                service_desk_df = pd.DataFrame(service_desk_issues) if isinstance(service_desk_issues, list) else pd.DataFrame()
-                closed_issues_df = pd.DataFrame(closed_issues) if isinstance(closed_issues, list) else pd.DataFrame()
-                bug_issues_df = pd.DataFrame(bug_issues) if isinstance(bug_issues, list) else pd.DataFrame()
-                
-                # Filter and clean data
-                def filter_by_date(df, since, until, date_column='created_at'):
-                    if df.empty or date_column not in df.columns:
-                        return df
-                    df[date_column] = pd.to_datetime(df[date_column], errors='coerce', utc=True)
-                    since_utc = pd.to_datetime(since).tz_localize('UTC')
-                    until_utc = pd.to_datetime(until).tz_localize('UTC')
-                    filtered_df = df[(df[date_column] >= since_utc) & (df[date_column] <= until_utc)]
-                    if date_column in filtered_df.columns:
-                        filtered_df = filtered_df.copy()
-                        filtered_df[date_column] = filtered_df[date_column].dt.tz_convert('UTC').dt.tz_localize(None)
-                    return filtered_df
-                
-                def remove_timezone_info(df):
-                    if df.empty:
-                        return df
-                    df_copy = df.copy()
-                    for col in df_copy.columns:
-                        if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
-                            if hasattr(df_copy[col].dtype, 'tz') and df_copy[col].dtype.tz is not None:
-                                df_copy[col] = df_copy[col].dt.tz_convert('UTC').dt.tz_localize(None)
-                            df_copy[col] = df_copy[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-                    return df_copy
-                
-                # Filter merge DataFrames
-                self.after(0, lambda: self.status_var.set('Filtering merge requests by date...'))
-                filtered_merge_df = filter_by_date(merge_df.copy(), since, until)
-                filtered_merge_df_opened = filter_by_date(merge_df_opened.copy(), since, until)
-                filtered_merge_df_closed = filter_by_date(merge_df_closed.copy(), since, until)
-                filtered_merge_df_merged = filter_by_date(merge_df_merged.copy(), since, until)
-                filtered_issue_df = filter_by_date(issue_df.copy(), since, until, 'updated_at') if 'updated_at' in issue_df.columns else issue_df
-                
-                # Remove timezone info
-                self.after(0, lambda: self.status_var.set('Cleaning data...'))
-                push_df_clean = remove_timezone_info(push_df)
-                commits_df_clean = remove_timezone_info(commits_df)
-                filtered_merge_df_clean = remove_timezone_info(filtered_merge_df)
-                filtered_merge_df_opened_clean = remove_timezone_info(filtered_merge_df_opened)
-                filtered_merge_df_closed_clean = remove_timezone_info(filtered_merge_df_closed)
-                filtered_merge_df_merged_clean = remove_timezone_info(filtered_merge_df_merged)
-                filtered_issue_df_clean = remove_timezone_info(filtered_issue_df)
-                service_desk_df_clean = remove_timezone_info(service_desk_df)
-                milestones_df_clean = remove_timezone_info(milestones_df)
-                closed_issues_df_clean = remove_timezone_info(closed_issues_df)
-                bug_issues_df_clean = remove_timezone_info(bug_issues_df)
-                
-                # Merge DataFrames
-                self.after(0, lambda: self.status_var.set('Merging all data...'))
-                def merge_on_project_id(left, right):
-                    right_unique = right[[col for col in right.columns if col not in left.columns or col == 'project_id']]
-                    return pd.merge(left, right_unique, on='project_id', how='outer')
-                
-                dfs_to_merge = [
-                    df for df in [
-                        push_df_clean, filtered_merge_df_clean, filtered_merge_df_opened_clean,
-                        filtered_merge_df_closed_clean, filtered_merge_df_merged_clean,
-                        filtered_issue_df_clean, milestones_df_clean, service_desk_df_clean,
-                        closed_issues_df_clean, bug_issues_df_clean
-                    ] if not df.empty and 'project_id' in df.columns
-                ]
-                
-                if dfs_to_merge:
-                    merged_df = reduce(merge_on_project_id, dfs_to_merge)
-                else:
-                    merged_df = pd.DataFrame()
-                
-                # Create output directory and file prefix based on mode
-                if mode == 'month':
-                    date_prefix = since.strftime('%Y-%m')
-                else:
-                    date_prefix = f"{since.strftime('%Y-%m-%d')}_to_{until.strftime('%Y-%m-%d')}"
-                
-                final_output_dir = os.path.join(output_dir, date_prefix)
-                os.makedirs(final_output_dir, exist_ok=True)
-                
-                # Save to Excel
-                self.after(0, lambda: self.status_var.set('Saving to Excel files...'))
-                merged_output_file = os.path.join(final_output_dir, f"{date_prefix}_all_gitlab_info.xlsx")
-                merged_df.to_excel(merged_output_file, index=False)
-                
-                commits_output_file = os.path.join(final_output_dir, f"{date_prefix}_commits.xlsx")
-                print(f"DEBUG: Saving commits file with {len(commits_df_clean)} rows")
-                commits_df_clean.to_excel(commits_output_file, index=False)
-                
-                # Update UI on main thread
-                self.after(0, lambda: self.extraction_complete(final_output_dir))
-                
+
+                # Use the new unified Excel output function
+                self.after(0, lambda: self.status_var.set('Saving Excel files...'))
+                merged_output_file, commits_output_file, output_dir_final = get_gitlab_info.save_gitlab_data_to_excel(
+                    push_events, commits, merge_events, issue_events, milestones, since, until, output_dir
+                )
+                self.after(0, lambda: self.extraction_complete(output_dir_final))
             except Exception as e:
-                # Else, Update UI on main thread with error
-                self.after(0, lambda: self.extraction_failed(str(e)))
-        
-        # Start the extraction in a background thread
+                error_msg = str(e)
+                self.after(0, lambda: self.extraction_failed(error_msg))
+
         thread = threading.Thread(target=extraction_thread)
         thread.daemon = True
         thread.start()
